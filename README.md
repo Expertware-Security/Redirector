@@ -51,6 +51,9 @@ Prompt order:
 6. Mode (`targeted` or `catchall`)
 7. (only in `targeted`) Allowed path prefixes, comma separated
 8. (only in `targeted`) User-Agent allowlist, comma separated, empty means no filter
+9. TLS certificate (`self-signed` or `letsencrypt`, default `self-signed`)
+10. (only with `letsencrypt`) Email for renewal and security notices
+11. (only with `letsencrypt`) Staging or production (default no, meaning production)
 
 ## How to test it works
 
@@ -89,7 +92,8 @@ On native Linux and macOS the suites run as-is, no extra setup needed.
 
 ## Things worth knowing before you use it
 
-* The HTTPS certificate is self-signed. For anything exposed publicly, replace `/etc/ssl/redirector/redirector.crt` and `redirector.key` with a real one (Let's Encrypt, internal CA, whatever fits) and restart the service.
+* The HTTPS certificate defaults to self-signed, which always works (no DNS, no firewall requirements, no external dependency). When you pick `letsencrypt` at the TLS prompt, the script installs certbot, serves the ACME HTTP-01 challenge from `/var/www/html/.well-known/acme-challenge/` (this passthrough is always present in the config, regardless of mode), runs `certbot certonly --webroot`, then rewrites the config to point to `/etc/letsencrypt/live/<domain>/`. Renewal is wired up automatically through certbot's systemd timer with a reload hook. If issuance fails (DNS does not resolve to this host, port 80 unreachable, rate limited, etc.) the script keeps the self-signed cert and warns, so the box never ends up without HTTPS. Let's Encrypt requires `HTTP port = 80` because the HTTP-01 challenge always validates on port 80; if you pick another port, the script skips issuance and stays on self-signed.
+* The Let's Encrypt staging option uses the test CA. Certs are issued instantly and with very high rate limits, but browsers do not trust them (same warning as self-signed). Use it while you are wiring up DNS and verifying the setup, then rerun the script with `n` for the real cert. Production rate limits to watch for: 5 duplicate certs per week, 50 certs per registered domain per week.
 * The upstream `Host` header is rewritten to the backend's hostname, not forwarded from the client. This is what you want for CDN-fronted backends like Cloudflare: if Host does not match SNI, Cloudflare answers `421 Misdirected Request`. If you actually need to forward the client's Host (rare, mostly internal vhost setups), edit the generated config and switch `ProxyPreserveHost` to `On` for Apache, or set `proxy_set_header Host $host;` for Nginx.
 * In `targeted` mode the path allowlist matches by prefix but is anchored, so `/apifoo` does not match an `/api` entry. That is intentional, to avoid accidentally exposing routes you did not mean to.
 * The User-Agent filter is a noise reduction tool, not a security boundary. Anyone who really wants to reach the backend can set the header themselves. It is mostly useful for keeping casual scanners out of the logs.

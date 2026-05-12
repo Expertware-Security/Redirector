@@ -97,6 +97,7 @@ test.local
 80
 443
 catchall
+self-signed
 "
     else
         answers="${ws}
@@ -107,6 +108,7 @@ test.local
 targeted
 /api,/health
 TestAgent
+self-signed
 "
     fi
 
@@ -118,6 +120,12 @@ TestAgent
     fi
 
     sleep 1
+
+    # ACME HTTP-01 passthrough must work in every mode (so Let's Encrypt
+    # issuance is possible even when targeted mode would 404 /unknown paths).
+    docker exec "$container" bash -c 'mkdir -p /var/www/html/.well-known/acme-challenge && printf acme-ok > /var/www/html/.well-known/acme-challenge/token123'
+    assert_code         "$container" 200 "ACME challenge served locally"            "http://127.0.0.1/.well-known/acme-challenge/token123"
+    assert_body_contains "$container" "acme-ok" "ACME challenge body"               "http://127.0.0.1/.well-known/acme-challenge/token123"
 
     if [[ "$mode" == "catchall" ]]; then
         assert_code         "$container" 200 "HTTP  /"               "http://127.0.0.1/"

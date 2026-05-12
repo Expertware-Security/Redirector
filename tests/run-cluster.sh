@@ -107,6 +107,7 @@ test.local
 80
 443
 catchall
+self-signed
 "
     else
         answers="${ws}
@@ -117,6 +118,7 @@ test.local
 targeted
 /api,/health
 TestAgent
+self-signed
 "
     fi
 

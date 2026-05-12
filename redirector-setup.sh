@@ -89,6 +89,27 @@ if [[ "$MODE" == "targeted" && ${#NORMALIZED_PATHS[@]} -eq 0 ]]; then
     exit 1
 fi
 
+prompt_choice TLS_MODE "TLS certificate" "self-signed" "letsencrypt" "self-signed"
+LE_EMAIL=""
+LE_STAGING="0"
+if [[ "$TLS_MODE" == "letsencrypt" ]]; then
+    while true; do
+        prompt_str LE_EMAIL "Email for Let's Encrypt expiry / security notices" ""
+        [[ "$LE_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] && break
+        err "Invalid email."
+    done
+
+    printf '\n%s[i]%s Let'\''s Encrypt has two CAs:\n' "$C_Y" "$C_0"
+    printf '    production = trusted by browsers, but rate limited\n'
+    printf '                 (5 duplicate certs per week, 50 per registered domain per week).\n'
+    printf '    staging    = test CA, browsers do NOT trust the cert (same warning as a\n'
+    printf '                 self-signed one), but issuance is fast and limits are very high.\n'
+    printf '                 Pick staging while you are wiring up DNS and verifying the\n'
+    printf '                 setup, then rerun the script with no to mint the real cert.\n\n'
+    prompt_choice LE_STAGING_IN "Use Let's Encrypt staging?" "n" "y" "n"
+    [[ "$LE_STAGING_IN" == "y" ]] && LE_STAGING="1"
+fi
+
 apt_install() {
     log "Installing: $*"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -134,12 +155,23 @@ write_apache_config() {
 "
     fi
 
+    # ACME HTTP-01 challenges must never be proxied, even when the redirector
+    # is in catchall mode. Always serve them from the local docroot.
+    local acme_block='    Alias "/.well-known/acme-challenge" "/var/www/html/.well-known/acme-challenge"
+    <Directory "/var/www/html/.well-known/acme-challenge">
+        Require all granted
+        Options -Indexes
+    </Directory>
+
+'
+
     local body
     if [[ "$MODE" == "catchall" ]]; then
-        body="    ProxyRequests Off
+        body="${acme_block}    ProxyRequests Off
     # Off: Apache rewrites Host to the backend hostname from ProxyPass.
     # Required for CDN-fronted backends (Cloudflare etc.) where Host must match SNI.
     ProxyPreserveHost Off
+    ProxyPass /.well-known/acme-challenge !
 $proxy_ssl    ProxyPass        / ${BACKEND_URL}/
     ProxyPassReverse / ${BACKEND_URL}/
 "
@@ -155,11 +187,13 @@ $proxy_ssl    ProxyPass        / ${BACKEND_URL}/
     RewriteRule .* - [R=404,L]
 "
         fi
-        body="    ProxyRequests Off
+        body="${acme_block}    ProxyRequests Off
     # Off: Apache rewrites Host to the backend hostname from ProxyPass.
     # Required for CDN-fronted backends (Cloudflare etc.) where Host must match SNI.
     ProxyPreserveHost Off
 $proxy_ssl    RewriteEngine On
+    # ACME challenges are served from the alias above, never proxied or 404'd
+    RewriteRule ^/\.well-known/acme-challenge/ - [L]
 $ua_block    # Proxy allowed paths to backend, preserving the original path
     RewriteRule ^/($path_alt)(/.*)?\$ ${BACKEND_URL}/\$1\$2 [P,L]
 
@@ -237,9 +271,17 @@ write_nginx_config() {
 '
     fi
 
+    # ^~ wins over regex locations, so ACME challenges are always served
+    # from the local docroot, regardless of mode or path/UA allowlists.
+    local acme_block='    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+'
+
     local body
     if [[ "$MODE" == "catchall" ]]; then
-        body="    location / {
+        body="${acme_block}
+    location / {
 $ua_check        proxy_pass ${BACKEND_URL};
 $proxy_common
     }"
@@ -247,7 +289,8 @@ $proxy_common
         local stripped=()
         for p in "${NORMALIZED_PATHS[@]}"; do stripped+=("${p#/}"); done
         local path_alt; path_alt=$(regex_escape_alt "${stripped[@]}")
-        body="    location ~ ^/($path_alt)(/|\$) {
+        body="${acme_block}
+    location ~ ^/($path_alt)(/|\$) {
 $ua_check        proxy_pass ${BACKEND_URL};
 $proxy_common
     }
@@ -321,9 +364,62 @@ case "$WEBSERVER" in
         ;;
 esac
 
+# Let's Encrypt issuance runs after the web server is up serving the
+# self-signed cert. On any failure we keep the self-signed cert and warn,
+# so a bad DNS / firewall does not leave the box without HTTPS.
+CERT_LABEL="self-signed"
+if [[ "$TLS_MODE" == "letsencrypt" ]]; then
+    if [[ "$HTTP_PORT" != "80" ]]; then
+        warn "HTTP port is $HTTP_PORT but Let's Encrypt HTTP-01 always validates on port 80."
+        warn "Keeping the self-signed cert. Rerun with HTTP port 80 to use Let's Encrypt."
+    else
+        log "Requesting Let's Encrypt cert for $SERVER_NAME..."
+        command -v certbot >/dev/null 2>&1 || apt_install certbot
+        mkdir -p /var/www/html/.well-known/acme-challenge
+
+        LE_RELOAD=""
+        case "$WEBSERVER" in
+            apache2) LE_RELOAD="systemctl reload apache2" ;;
+            nginx)   LE_RELOAD="systemctl reload nginx" ;;
+        esac
+
+        LE_EXTRA=()
+        [[ "$LE_STAGING" == "1" ]] && LE_EXTRA+=(--test-cert)
+
+        if certbot certonly --webroot -w /var/www/html \
+                -d "$SERVER_NAME" \
+                -m "$LE_EMAIL" \
+                --agree-tos --no-eff-email --non-interactive \
+                --deploy-hook "$LE_RELOAD" \
+                "${LE_EXTRA[@]}"; then
+            CERT_CRT="/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem"
+            CERT_KEY="/etc/letsencrypt/live/$SERVER_NAME/privkey.pem"
+            log "Cert issued. Rewriting config to use Let's Encrypt paths."
+            case "$WEBSERVER" in
+                apache2) write_apache_config; apache2ctl -t; restart_server apache2 ;;
+                nginx)   write_nginx_config;  nginx -t;       restart_server nginx ;;
+            esac
+            if [[ "$LE_STAGING" == "1" ]]; then
+                CERT_LABEL="Let's Encrypt (staging, not browser-trusted)"
+                warn "Staging cert active. Browsers will still show a warning."
+                warn "Rerun the script and answer no to staging when you want the real cert."
+            else
+                CERT_LABEL="Let's Encrypt"
+                log "Production Let's Encrypt cert active. Renewal handled by certbot's systemd timer."
+            fi
+        else
+            err "Let's Encrypt issuance failed. Keeping the self-signed cert."
+            warn "Likely causes:"
+            warn "  - $SERVER_NAME does not resolve to this host (check DNS A/AAAA records)."
+            warn "  - Port 80 is not reachable from the public internet (firewall, NAT)."
+            warn "  - Rate limited (5 duplicate certs per week on production). Try staging."
+        fi
+    fi
+fi
+
 printf '\n%s== Redirector active ==%s\n' "$C_G" "$C_0"
 printf '  Web server : %s\n' "$WEBSERVER"
-printf '  Listening  : :%s (HTTP), :%s (HTTPS, self-signed)\n' "$HTTP_PORT" "$HTTPS_PORT"
+printf '  Listening  : :%s (HTTP), :%s (HTTPS, %s)\n' "$HTTP_PORT" "$HTTPS_PORT" "$CERT_LABEL"
 printf '  Backend    : %s\n' "$BACKEND_URL"
 printf '  Mode       : %s\n' "$MODE"
 if [[ "$MODE" == "targeted" ]]; then
