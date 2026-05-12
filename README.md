@@ -59,35 +59,33 @@ Prompt order:
 
 Skip this section if you stick with the self-signed cert. If you pick `letsencrypt`, the ACME HTTP-01 challenge needs your domain to resolve to the redirector's public IPv4, so Let's Encrypt can reach `http://<your-domain>/.well-known/acme-challenge/...` on port 80.
 
-Set these in the Azure portal, under `DNS zones > <your zone> > + Record set`. Only the values shown as `replace this` need editing.
+The snippet below is in the [BIND zone file format that Azure DNS imports natively](https://learn.microsoft.com/en-us/azure/dns/dns-import-export-portal). Save it as `example.com.txt`, then in the Azure portal go to `DNS zones > <your zone> > Import`, pick the file, review in the diff viewer, and apply. Azure auto-creates and preserves its own NS and SOA records, so you do not need to include them.
 
-### Subdomain (recommended, for example `redir.example.com`)
+### Subdomain (for example `redir.example.com`)
 
-A record, IPv4, required:
+```text
+$ORIGIN example.com.        ; replace example.com with your zone
+$TTL 300
 
-```
-Name:       redir            <- replace this with your subdomain
-Type:       A
-TTL:        300
-IP Address: 203.0.113.42     <- replace this with the redirector's public IPv4
-```
-
-AAAA record, IPv6, only add this if the redirector actually has a public IPv6 (most Azure VMs do not by default; if unsure, skip):
-
-```
-Name:       redir            <- same as above
-Type:       AAAA
-TTL:        300
-IP Address: 2001:db8::42     <- replace this with the redirector's public IPv6
+redir   IN   A      203.0.113.42        ; replace with the redirector's public IPv4
+redir   IN   AAAA   2001:db8::42        ; optional, delete this line if no public IPv6
 ```
 
 ### Apex (`example.com` itself, no subdomain)
 
-Same as above, but `Name` is `@` instead of the subdomain.
+```text
+$ORIGIN example.com.        ; replace example.com with your zone
+$TTL 300
+
+@       IN   A      203.0.113.42        ; replace with the redirector's public IPv4
+@       IN   AAAA   2001:db8::42        ; optional, delete this line if no public IPv6
+```
+
+You only edit two things: the zone in `$ORIGIN` and the IP after `A` (and the IPv6 line, if you use one).
 
 ### Azure CLI alternative
 
-If you prefer the CLI over the portal, this is the same thing in two commands. Replace the four variables at the top.
+If you prefer the CLI over the portal, same effect in two commands:
 
 ```bash
 ZONE="example.com"           # the zone you own in Azure DNS
@@ -107,7 +105,7 @@ az network dns record-set a add-record -g "$RG" -z "$ZONE" -n "$NAME" -a "$IPV4"
 From the redirector itself:
 
 ```bash
-dig +short A redir.example.com    # should print your IPv4
+dig +short A redir.example.com       # should print your IPv4
 curl -fsS http://redir.example.com/  # should hit the redirector (200, 404, anything is fine, as long as it lands)
 ```
 
