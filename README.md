@@ -90,6 +90,7 @@ On native Linux and macOS the suites run as-is, no extra setup needed.
 ## Things worth knowing before you use it
 
 * The HTTPS certificate is self-signed. For anything exposed publicly, replace `/etc/ssl/redirector/redirector.crt` and `redirector.key` with a real one (Let's Encrypt, internal CA, whatever fits) and restart the service.
+* The upstream `Host` header is rewritten to the backend's hostname, not forwarded from the client. This is what you want for CDN-fronted backends like Cloudflare: if Host does not match SNI, Cloudflare answers `421 Misdirected Request`. If you actually need to forward the client's Host (rare, mostly internal vhost setups), edit the generated config and switch `ProxyPreserveHost` to `On` for Apache, or set `proxy_set_header Host $host;` for Nginx.
 * In `targeted` mode the path allowlist matches by prefix but is anchored, so `/apifoo` does not match an `/api` entry. That is intentional, to avoid accidentally exposing routes you did not mean to.
 * The User-Agent filter is a noise reduction tool, not a security boundary. Anyone who really wants to reach the backend can set the header themselves. It is mostly useful for keeping casual scanners out of the logs.
 * The script assumes a Debian or Ubuntu based distribution (it uses `apt-get`). Anything else needs manual tweaks.

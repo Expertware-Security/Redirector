@@ -49,6 +49,12 @@ while true; do
     err "Invalid URL (must be scheme://host[:port], no path)."
 done
 BACKEND_SCHEME="${BACKEND_URL%%://*}"
+# Hostname (no scheme, no port, no path) for the upstream Host header and SNI.
+# Without this, the client's Host header is forwarded and CDN-fronted backends
+# (Cloudflare, etc.) answer 421 Misdirected Request because Host != SNI.
+BACKEND_HOST="${BACKEND_URL#*://}"
+BACKEND_HOST="${BACKEND_HOST%%/*}"
+BACKEND_HOST="${BACKEND_HOST%%:*}"
 
 prompt_str SERVER_NAME "ServerName / cert CN" "redirector.local"
 prompt_str HTTP_PORT   "HTTP listen port"  "80"
@@ -131,7 +137,9 @@ write_apache_config() {
     local body
     if [[ "$MODE" == "catchall" ]]; then
         body="    ProxyRequests Off
-    ProxyPreserveHost On
+    # Off: Apache rewrites Host to the backend hostname from ProxyPass.
+    # Required for CDN-fronted backends (Cloudflare etc.) where Host must match SNI.
+    ProxyPreserveHost Off
 $proxy_ssl    ProxyPass        / ${BACKEND_URL}/
     ProxyPassReverse / ${BACKEND_URL}/
 "
@@ -148,7 +156,9 @@ $proxy_ssl    ProxyPass        / ${BACKEND_URL}/
 "
         fi
         body="    ProxyRequests Off
-    ProxyPreserveHost On
+    # Off: Apache rewrites Host to the backend hostname from ProxyPass.
+    # Required for CDN-fronted backends (Cloudflare etc.) where Host must match SNI.
+    ProxyPreserveHost Off
 $proxy_ssl    RewriteEngine On
 $ua_block    # Proxy allowed paths to backend, preserving the original path
     RewriteRule ^/($path_alt)(/.*)?\$ ${BACKEND_URL}/\$1\$2 [P,L]
@@ -203,13 +213,17 @@ write_nginx_config() {
     local conf="/etc/nginx/sites-available/redirector"
     local link="/etc/nginx/sites-enabled/redirector"
 
-    local proxy_common='        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+    # Host header and SNI must point at the backend hostname, not at the
+    # client's Host, otherwise CDN-fronted backends (Cloudflare etc.) reply
+    # 421 Misdirected Request when Host and SNI disagree.
+    local proxy_common="        proxy_http_version 1.1;
+        proxy_set_header Host ${BACKEND_HOST};
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_ssl_verify off;
-        proxy_ssl_server_name on;'
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${BACKEND_HOST};"
 
     local ua_map="" ua_check=""
     if ((${#NORMALIZED_UAS[@]} > 0)); then

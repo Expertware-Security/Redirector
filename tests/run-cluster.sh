@@ -135,19 +135,23 @@ TestAgent
         assert_code         "$base/"               200 "HTTP  /"
         assert_code         "$base/random"         200 "HTTP  /random"
         assert_body_contains "$base/random" "path=/random" "HTTP /random path"
+        assert_body_contains "$base/random" "host=backend" "HTTP Host rewritten to backend"
         assert_code         "$base/api/deep/x"     200 "HTTP  /api/deep/x"
         assert_body_contains "$base/api/deep/x" "path=/api/deep/x" "HTTP /api/deep/x path"
         assert_code         "$sbase/random"        200 "HTTPS /random (-k)"      -k
         assert_body_contains "$sbase/random" "path=/random" "HTTPS /random path"  -k
+        assert_body_contains "$sbase/random" "host=backend" "HTTPS Host rewritten to backend" -k
     else
         assert_code         "$base/api/x"          200 "HTTP  /api/x   UA=ok"   -H "User-Agent: TestAgent"
         assert_body_contains "$base/api/x" "path=/api/x" "HTTP /api/x path"     -H "User-Agent: TestAgent"
+        assert_body_contains "$base/api/x" "host=backend" "HTTP Host rewritten to backend" -H "User-Agent: TestAgent"
         assert_code         "$base/health"         200 "HTTP  /health  UA=ok"   -H "User-Agent: TestAgent"
         assert_code         "$base/api"            200 "HTTP  /api     UA=ok"   -H "User-Agent: TestAgent"
         assert_code         "$base/api/x"          404 "HTTP  /api/x   UA=bad"  -H "User-Agent: Mozilla/5.0"
         assert_code         "$base/random"         404 "HTTP  /random  UA=ok"   -H "User-Agent: TestAgent"
         assert_code         "$base/apifoo"         404 "HTTP  /apifoo  UA=ok"   -H "User-Agent: TestAgent"
         assert_code         "$sbase/api/x"         200 "HTTPS /api/x   UA=ok"   -k -H "User-Agent: TestAgent"
+        assert_body_contains "$sbase/api/x" "host=backend" "HTTPS Host rewritten to backend" -k -H "User-Agent: TestAgent"
         assert_code         "$sbase/random"        404 "HTTPS /random  UA=ok"   -k -H "User-Agent: TestAgent"
         assert_code         "$sbase/api/x"         404 "HTTPS /api/x   UA=bad"  -k -H "User-Agent: Mozilla/5.0"
     fi

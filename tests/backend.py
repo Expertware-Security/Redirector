@@ -14,7 +14,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header("X-Backend", "real")
         self.end_headers()
         ua = self.headers.get("User-Agent", "")
-        self.wfile.write(f"backend-ok path={self.path} ua={ua}\n".encode())
+        host = self.headers.get("Host", "")
+        self.wfile.write(f"backend-ok path={self.path} host={host} ua={ua}\n".encode())
 
     def do_GET(self):
         self._resp()
