@@ -55,6 +55,64 @@ Prompt order:
 10. (only with `letsencrypt`) Email for renewal and security notices
 11. (only with `letsencrypt`) Staging or production (default no, meaning production)
 
+## DNS setup for Let's Encrypt (Azure DNS Zone)
+
+Skip this section if you stick with the self-signed cert. If you pick `letsencrypt`, the ACME HTTP-01 challenge needs your domain to resolve to the redirector's public IPv4, so Let's Encrypt can reach `http://<your-domain>/.well-known/acme-challenge/...` on port 80.
+
+Set these in the Azure portal, under `DNS zones > <your zone> > + Record set`. Only the values shown as `replace this` need editing.
+
+### Subdomain (recommended, for example `redir.example.com`)
+
+A record, IPv4, required:
+
+```
+Name:       redir            <- replace this with your subdomain
+Type:       A
+TTL:        300
+IP Address: 203.0.113.42     <- replace this with the redirector's public IPv4
+```
+
+AAAA record, IPv6, only add this if the redirector actually has a public IPv6 (most Azure VMs do not by default; if unsure, skip):
+
+```
+Name:       redir            <- same as above
+Type:       AAAA
+TTL:        300
+IP Address: 2001:db8::42     <- replace this with the redirector's public IPv6
+```
+
+### Apex (`example.com` itself, no subdomain)
+
+Same as above, but `Name` is `@` instead of the subdomain.
+
+### Azure CLI alternative
+
+If you prefer the CLI over the portal, this is the same thing in two commands. Replace the four variables at the top.
+
+```bash
+ZONE="example.com"           # the zone you own in Azure DNS
+RG="my-resource-group"       # the resource group holding the zone
+NAME="redir"                 # subdomain, or "@" for apex
+IPV4="203.0.113.42"          # redirector's public IPv4
+
+az network dns record-set a add-record -g "$RG" -z "$ZONE" -n "$NAME" -a "$IPV4" --ttl 300
+
+# Only if you also have public IPv6:
+# IPV6="2001:db8::42"
+# az network dns record-set aaaa add-record -g "$RG" -z "$ZONE" -n "$NAME" -a "$IPV6" --ttl 300
+```
+
+### Verify before running the script with `letsencrypt`
+
+From the redirector itself:
+
+```bash
+dig +short A redir.example.com    # should print your IPv4
+curl -fsS http://redir.example.com/  # should hit the redirector (200, 404, anything is fine, as long as it lands)
+```
+
+If both work, you are ready. Common Azure traps if they do not: NSG inbound port 80 is closed, the VM's public IP is `Dynamic` instead of `Static`, or the zone is not delegated at your registrar (check the NS records in the zone's Overview page).
+
 ## How to test it works
 
 The `tests/` folder ships two test suites, both Docker based. Neither of them touches your local machine.
