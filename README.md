@@ -1,33 +1,33 @@
 # Redirector
 
-Un script de setup interactiv care transformă o mașină Linux într-un reverse proxy peste Apache2 sau Nginx. Scopul lui e simplu: pui un domeniu sau un IP în față, trimiți traficul mai departe către un backend real, iar tu decizi dacă orice cerere merge prin sau doar cele care arată "OK" (path-uri permise, opțional și un filtru de User-Agent). Pe ce nu se potrivește, se răspunde cu 404 ca și cum nimic nu există acolo.
+An interactive setup script that turns a Linux box into a reverse proxy using Apache2 or Nginx. The idea is simple: you put a domain or an IP in front, forward traffic to a real backend, and you decide whether any request goes through or only the ones that look legitimate (allowed path prefixes, plus an optional User-Agent filter). Anything that does not match gets a 404, as if nothing was ever there.
 
-E gândit pentru situații de tip operator: vrei să expui un backend printr-o cutie intermediară, dar nu vrei ca scannerele și vizitatorii întâmplători să vadă mai mult decât trebuie. HTTP și HTTPS sunt configurate amândouă, cu un certificat self-signed generat local. Dacă ai nevoie de unul real, înlocuiești fișierele din `/etc/ssl/redirector/` după rulare.
+It is built for operator-style scenarios: you want to expose a backend through an intermediate host, but you do not want scanners and random visitors to see more than they should. Both HTTP and HTTPS are configured out of the box, with a locally generated self-signed certificate. If you need a real cert, you swap the files in `/etc/ssl/redirector/` after the run.
 
-## Ce face concret
+## What it actually does
 
-* Te întreabă ce web server vrei (`nginx` sau `apache2`), instalează ce lipsește.
-* Te întreabă către ce backend să trimită (de exemplu `http://10.0.0.20:8080` sau `https://api.intern.local`).
-* Te întreabă ce nume de server și ce porturi să folosească (80 / 443 sunt default).
-* Te lasă să alegi modul de operare:
-  * `catchall` proxy-ează absolut orice cerere.
-  * `targeted` proxy-ează doar path-urile pe care le treci în allowlist (ex. `/api,/health`) și opțional doar dacă User-Agent-ul conține una din etichetele acceptate. Restul primesc 404.
-* Generează un cert self-signed pentru `ServerName` dacă nu există deja unul în `/etc/ssl/redirector/`.
-* Scrie config-ul, validează sintaxa, repornește serviciul.
+* Asks which web server you want (`nginx` or `apache2`) and installs whatever is missing.
+* Asks for the backend URL (for example `http://10.0.0.20:8080` or `https://api.internal.local`).
+* Asks for the server name and which ports to listen on (defaults are 80 and 443).
+* Lets you pick the operating mode:
+  * `catchall` proxies every request to the backend.
+  * `targeted` only proxies requests matching the allowed path prefixes (for example `/api,/health`), optionally filtered by User-Agent. Everything else gets a 404.
+* Generates a self-signed certificate for the chosen `ServerName` if there is not one already in `/etc/ssl/redirector/`.
+* Writes the config, validates the syntax, restarts the service.
 
-Path-ul original al cererii se păstrează când e trimisă către backend, ca să nu trebuiască să mai potrivești manual la celălalt capăt.
+The original request path is preserved when forwarded to the backend, so you do not need to rewrite anything on the other side.
 
-## Cum rulezi
+## How to run it
 
-Trebuie root, pentru că instalează pachete și scrie în `/etc/`.
+You need root, because the script installs packages and writes under `/etc/`.
 
-One-liner direct de pe GitHub, fără să trebuiască să clonezi nimic:
+One-liner straight from GitHub, no cloning required:
 
 ```bash
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Expertware-Security/Redirector/main/redirector-setup.sh)"
 ```
 
-Funcționează interactiv: `curl` aduce scriptul, `bash -c` îl execută cu stdin-ul tot pe terminal, așa că prompt-urile rămân funcționale. Dacă preferi să te uiți peste el înainte:
+This works interactively: `curl` fetches the script, `bash -c` runs it with stdin still attached to your terminal, so the prompts keep working. If you would rather inspect it first:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Expertware-Security/Redirector/main/redirector-setup.sh -o redirector-setup.sh
@@ -35,74 +35,74 @@ less redirector-setup.sh
 sudo bash redirector-setup.sh
 ```
 
-Răspunzi la prompt-uri și gata. Dacă vrei să rulezi neinteractiv (de exemplu dintr-un alt script sau dintr-un pipeline), îi poți alimenta răspunsurile prin stdin în ordinea în care sunt cerute:
+Answer the prompts and you are done. If you want to run it non-interactively (from another script or a pipeline), you can feed the answers through stdin in the exact order the script asks for them:
 
 ```bash
 printf 'nginx\nhttp://10.0.0.20:8080\nmy.host.tld\n80\n443\ntargeted\n/api,/health\nTestAgent\n' \
   | sudo bash redirector-setup.sh
 ```
 
-Ordinea prompt-urilor:
-1. Web server (`nginx` sau `apache2`)
-2. URL backend
-3. ServerName / CN pentru cert
-4. Port HTTP
-5. Port HTTPS
-6. Mod (`targeted` sau `catchall`)
-7. (doar în `targeted`) Path-uri permise, separate prin virgulă
-8. (doar în `targeted`) User-Agent allowlist, separat prin virgulă, gol înseamnă fără filtru
+Prompt order:
+1. Web server (`nginx` or `apache2`)
+2. Backend URL
+3. ServerName / cert CN
+4. HTTP port
+5. HTTPS port
+6. Mode (`targeted` or `catchall`)
+7. (only in `targeted`) Allowed path prefixes, comma separated
+8. (only in `targeted`) User-Agent allowlist, comma separated, empty means no filter
 
-## Cum testezi că merge
+## How to test it works
 
-În folderul `tests/` sunt două suite, ambele pe Docker. Niciuna nu îți atinge mașina locală.
+The `tests/` folder ships two test suites, both Docker based. Neither of them touches your local machine.
 
-### `tests/run.sh` – test rapid, un singur container
+### `tests/run.sh`, the quick single-container suite
 
-Pornește un container Ubuntu, instalează `apache2`, `nginx`, `python3`, copiază scriptul de setup și un backend minimal scris în Python, apoi rulează scriptul pentru fiecare combinație de web server și mod. Backend, redirector și curl trăiesc toate în același container și vorbesc pe `127.0.0.1`. E rapid, dar nu trece pe rețea reală.
+Spins up an Ubuntu container, installs `apache2`, `nginx`, `python3`, copies the setup script plus a minimal Python backend, and runs the setup script for each combination of web server and mode. Backend, redirector and curl all live in the same container and talk over `127.0.0.1`. It is fast, but it does not exercise real networking.
 
 ```bash
 bash tests/run.sh
 ```
 
-Acoperă 4 combinații (`apache2/catchall`, `apache2/targeted`, `nginx/catchall`, `nginx/targeted`), cu asserții pe HTTP și HTTPS, păstrarea path-ului, allowlist de path, allowlist de User-Agent, plus respingerea cu 404 pe ce nu trebuie să treacă.
+It covers four combinations (`apache2/catchall`, `apache2/targeted`, `nginx/catchall`, `nginx/targeted`), with assertions for HTTP and HTTPS, path preservation, the path allowlist, the User-Agent allowlist, and 404 responses for everything that should not pass through.
 
-### `tests/run-cluster.sh` – test multi-container
+### `tests/run-cluster.sh`, the multi-container suite
 
-Acesta e mai aproape de realitate. Creează o rețea Docker, pornește backend-ul într-un container separat, clientul de curl în alt container, iar redirectorul într-un al treilea container, configurat să trimită către `http://backend:8080` prin DNS-ul Docker. Asta verifică efectiv că redirectorul vorbește peste rețea cu un alt host, nu cu el însuși.
+This one is closer to a real deployment. It creates a Docker network, runs the backend in its own container, the curl client in another, and the redirector in a third one, configured to forward to `http://backend:8080` via Docker's internal DNS. That way the redirector actually talks to a different host over the network instead of to itself.
 
 ```bash
 bash tests/run-cluster.sh
 ```
 
-Aceeași matrice de 4 combinații, plus un sanity check că clientul ajunge direct la backend.
+Same matrix of four combinations, plus a sanity check that the client can reach the backend directly.
 
-### Note pentru Windows
+### Windows notes
 
-Pe Git Bash, MSYS rescrie automat path-urile gen `/setup.sh` în `C:/Program Files/Git/setup.sh` când le pasează către `docker exec`. Cea mai simplă variantă e să rulezi suitele prin WSL:
+On Git Bash, MSYS automatically rewrites paths like `/setup.sh` into `C:/Program Files/Git/setup.sh` when they are passed to `docker exec`. The easiest workaround is to run the suites through WSL:
 
 ```powershell
-wsl -e bash -c "cd '/mnt/c/Users/<tu>/Documents/Custom Projects/Redirector' && bash tests/run.sh"
-wsl -e bash -c "cd '/mnt/c/Users/<tu>/Documents/Custom Projects/Redirector' && bash tests/run-cluster.sh"
+wsl -e bash -c "cd '/mnt/c/Users/<you>/Documents/Custom Projects/Redirector' && bash tests/run.sh"
+wsl -e bash -c "cd '/mnt/c/Users/<you>/Documents/Custom Projects/Redirector' && bash tests/run-cluster.sh"
 ```
 
-Pe Linux nativ și pe macOS, suitele rulează direct fără nimic în plus.
+On native Linux and macOS the suites run as-is, no extra setup needed.
 
-## Ce ar trebui să știi înainte să folosești
+## Things worth knowing before you use it
 
-* Certificatul HTTPS e self-signed. Pentru ceva expus public, înlocuiește `/etc/ssl/redirector/redirector.crt` și `redirector.key` cu un cert valid (Let's Encrypt, intern, oricum vrei tu) și repornește serviciul.
-* În modul `targeted`, allowlist-ul de path-uri se face pe prefix, dar e ancorat (nu se potrivește `/apifoo` când ai pus `/api`). Asta e intenționat, ca să nu scapi accidental rute pe care nu le vrei expuse.
-* Filtrul de User-Agent e o protecție de ramură, nu un mecanism de securitate. Cine vrea cu adevărat să ajungă la backend își setează singur header-ul. E util mai mult ca filtru anti-zgomot.
-* Scriptul presupune o distribuție Debian sau Ubuntu (folosește `apt-get`). Pe altceva trebuie ajustat la mână.
+* The HTTPS certificate is self-signed. For anything exposed publicly, replace `/etc/ssl/redirector/redirector.crt` and `redirector.key` with a real one (Let's Encrypt, internal CA, whatever fits) and restart the service.
+* In `targeted` mode the path allowlist matches by prefix but is anchored, so `/apifoo` does not match an `/api` entry. That is intentional, to avoid accidentally exposing routes you did not mean to.
+* The User-Agent filter is a noise reduction tool, not a security boundary. Anyone who really wants to reach the backend can set the header themselves. It is mostly useful for keeping casual scanners out of the logs.
+* The script assumes a Debian or Ubuntu based distribution (it uses `apt-get`). Anything else needs manual tweaks.
 
-## Structura repo-ului
+## Repo layout
 
 ```
-redirector-setup.sh        scriptul principal, singurul care merge pe target
+redirector-setup.sh        the main script, the only thing that runs on the target
 tests/
-  Dockerfile               imagine Ubuntu cu apache2, nginx, python3, curl
-  backend.py               backend de test, returnează path și User-Agent
-  run.sh                   suita rapidă (single-container)
-  run-cluster.sh           suita multi-container
+  Dockerfile               Ubuntu image with apache2, nginx, python3, curl
+  backend.py               test backend, echoes path and User-Agent
+  run.sh                   single-container test suite
+  run-cluster.sh           multi-container test suite
 ```
 
-Restul (`.gitignore`, README) sunt doar pentru repo.
+The rest (`.gitignore`, README) is repo-only.
